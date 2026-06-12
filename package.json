@@ -1,0 +1,41 @@
+{
+  "name": "@reachbell/react",
+  "version": "1.0.0",
+  "description": "React hooks + Provider for the ReachBell SDK — push notifications, identify, tag.",
+  "main":    "dist/index.cjs",
+  "module":  "dist/index.mjs",
+  "types":   "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types":   "./dist/index.d.ts",
+      "import":  "./dist/index.mjs",
+      "require": "./dist/index.cjs",
+      "default": "./dist/index.mjs"
+    },
+    "./package.json": "./package.json"
+  },
+  "sideEffects": false,
+  "files": ["dist", "README.md"],
+  "scripts": {
+    "build":          "rollup -c",
+    "typecheck":      "tsc --noEmit",
+    "prepublishOnly": "npm run typecheck && npm run build"
+  },
+  "keywords": ["reachbell", "react", "push notifications", "web push", "hooks"],
+  "author": "DotSpheres Technologies Pvt Ltd",
+  "license": "MIT",
+  "engines": { "node": ">=18" },
+  "peerDependencies": {
+    "@reachbell/sdk": "^1.0.0",
+    "react": "^18.0.0 || ^19.0.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.0.0",
+    "rollup": "^4.0.0",
+    "@rollup/plugin-typescript": "^11.0.0",
+    "tslib": "^2.6.0",
+    "@types/react": "^19.0.0",
+    "react": "^19.0.0",
+    "@reachbell/sdk": "file:../sdk"
+  }
+}
