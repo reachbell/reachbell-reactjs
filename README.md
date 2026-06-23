@@ -2,6 +2,8 @@
 
 React Provider + hooks for the [ReachBell](https://reachbell.com) SDK.
 
+Full documentation: https://docs.reachbell.com
+
 ## Install
 
 ```bash
