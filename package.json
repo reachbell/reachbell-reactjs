@@ -36,6 +36,6 @@
     "tslib": "^2.6.0",
     "@types/react": "^19.0.0",
     "react": "^19.0.0",
-    "@reachbell/sdk": "file:../sdk"
+    "@reachbell/sdk": "file:../reachbell-sdk"
   }
 }

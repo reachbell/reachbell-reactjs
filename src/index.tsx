@@ -24,7 +24,16 @@ import {
   useState,
   type ReactNode,
 } from 'react';
-import { ReachBell, type ReachBellConfig, type SubscribeResult, type ApiResult } from '@reachbell/sdk';
+import {
+  ReachBell,
+  type ReachBellConfig,
+  type SubscribeResult,
+  type ApiResult,
+  type ToastOptions,
+  type BannerOptions,
+  type NotificationCenterOptions,
+  type NotificationHistoryItem,
+} from '@reachbell/sdk';
 
 interface ReachBellContextValue {
   /** Has the SDK's bootstrap settled (success OR failure)? */
@@ -34,6 +43,12 @@ interface ReachBellContextValue {
   prompt:     () => Promise<SubscribeResult>;
   identify:   (externalId: string) => Promise<ApiResult>;
   tag:        (tags: string[]) => Promise<ApiResult>;
+  /** In-page corner toast notification */
+  showToast:  (opts: ToastOptions) => () => void;
+  /** In-page sticky banner */
+  showBanner: (opts: BannerOptions) => () => void;
+  /** Floating notification center widget */
+  showNotificationCenter: (opts?: NotificationCenterOptions) => () => void;
   /** Direct access to the underlying SDK if you need it. */
   sdk:        typeof ReachBell;
 }
@@ -81,10 +96,23 @@ export function ReachBellProvider({ children, ...config }: ReachBellProviderProp
 
   const identify = useCallback((externalId: string) => ReachBell.identify(externalId), []);
   const tag      = useCallback((tags: string[]) => ReachBell.tag(tags), []);
+  const showToast = useCallback((opts: ToastOptions) => ReachBell.showToast(opts), []);
+  const showBanner = useCallback((opts: BannerOptions) => ReachBell.showBanner(opts), []);
+  const showNotificationCenter = useCallback((opts?: NotificationCenterOptions) => ReachBell.showNotificationCenter(opts), []);
 
   const value = useMemo<ReachBellContextValue>(
-    () => ({ isReady, permission, prompt, identify, tag, sdk: ReachBell }),
-    [isReady, permission, prompt, identify, tag],
+    () => ({
+      isReady,
+      permission,
+      prompt,
+      identify,
+      tag,
+      showToast,
+      showBanner,
+      showNotificationCenter,
+      sdk: ReachBell,
+    }),
+    [isReady, permission, prompt, identify, tag, showToast, showBanner, showNotificationCenter],
   );
 
   return <ReachBellContext.Provider value={value}>{children}</ReachBellContext.Provider>;
@@ -127,4 +155,12 @@ export function useNotificationPermission(): {
   return { permission: local, refresh };
 }
 
-export type { ReachBellConfig, SubscribeResult, ApiResult } from '@reachbell/sdk';
+export type {
+  ReachBellConfig,
+  SubscribeResult,
+  ApiResult,
+  ToastOptions,
+  BannerOptions,
+  NotificationCenterOptions,
+  NotificationHistoryItem,
+} from '@reachbell/sdk';
