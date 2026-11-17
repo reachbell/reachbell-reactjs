@@ -63,29 +63,50 @@ export function ReachBellProvider({ children, ...config }: ReachBellProviderProp
   const initialized = useRef(false);
   const [isReady, setIsReady] = useState(false);
   const [permission, setPermission] = useState<NotificationPermission | null>(null);
+  const { apiKey } = config;
 
-  // Bootstrap exactly once. StrictMode runs effects twice in dev; the
-  // SDK's own idempotency guard makes the second init a no-op, but
-  // tracking it here also stops the local state from re-firing.
   useEffect(() => {
-    if (initialized.current) return;
-    initialized.current = true;
-
-    ReachBell.init(config);
-
-    if (typeof Notification !== 'undefined') {
-      setPermission(Notification.permission);
+    if (!apiKey) return;
+    if (!initialized.current) {
+      initialized.current = true;
+      ReachBell.init({ ...config, apiKey });
     }
 
     let cancelled = false;
     ReachBell.ready
       .catch(() => { /* the SDK warned-once already */ })
-      .finally(() => { if (!cancelled) setIsReady(true); });
+      .finally(() => {
+        if (cancelled) return;
+        setIsReady(true);
+        if (typeof Notification !== 'undefined') setPermission(Notification.permission);
+      });
     return () => { cancelled = true; };
-    // The config is captured on first mount intentionally. To re-init
-    // with new config, unmount + remount the provider (or use
-    // ReachBell.init({ …, force: true }) directly).
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [apiKey]);
+
+  useEffect(() => {
+    if (typeof Notification === 'undefined') return;
+    const sync = () => setPermission(Notification.permission);
+    sync();
+
+    let disposed = false;
+    let status: PermissionStatus | null = null;
+    if (typeof navigator !== 'undefined' && navigator.permissions && typeof navigator.permissions.query === 'function') {
+      try {
+        navigator.permissions
+          .query({ name: 'notifications' })
+          .then((s) => {
+            if (disposed || typeof s.addEventListener !== 'function') return;
+            status = s;
+            s.addEventListener('change', sync);
+          })
+          .catch(() => {});
+      } catch {}
+    }
+    return () => {
+      disposed = true;
+      status?.removeEventListener('change', sync);
+    };
   }, []);
 
   const prompt = useCallback(async (): Promise<SubscribeResult> => {

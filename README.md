@@ -42,13 +42,15 @@ function SubscribeButton() {
 
 | Export | Notes |
 | --- | --- |
-| `<ReachBellProvider {...config}>` | Initialises the SDK on mount. Accepts every `ReachBellConfig` field except `force` (the provider is single-shot). |
-| `useReachBell()` | Returns `{ isReady, permission, prompt, identify, tag, sdk }`. |
+| `<ReachBellProvider {...config}>` | Initialises the SDK once, on the first render where `apiKey` is set (so config loaded asynchronously works). Accepts every `ReachBellConfig` field except `force`; later config changes are ignored, remount the provider or call `ReachBell.init({ ..., force: true })` to re-initialise. |
+| `useReachBell()` | Returns `{ isReady, permission, prompt, identify, tag, showToast, showBanner, showNotificationCenter, sdk }`. `permission` is `null` until mount, then follows the browser permission (including changes made by the SDK's auto-prompt or bell widget, where `navigator.permissions` is supported). |
 | `useNotificationPermission()` | Returns `{ permission, refresh }` for components that only care about the permission state. |
 
 `prompt() / identify() / tag()` are thin wrappers around the same methods on `@reachbell/sdk`. See the SDK docs for return shapes.
 
-The provider is StrictMode-safe — the SDK's idempotency guard + an internal `useRef` make sure init runs exactly once.
+The provider is StrictMode-safe: an internal `useRef` plus the SDK's idempotency guard make sure init runs exactly once, and `isReady` still becomes `true` after StrictMode's double effect run in development.
+
+The built bundle starts with `"use client"`, so Next.js App Router Server Components can import it and render `<ReachBellProvider>` directly (pass serialisable props only). The hooks still need a client component.
 
 ## License
 
