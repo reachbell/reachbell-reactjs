@@ -61,6 +61,23 @@ interface ReachBellContextValue {
 
 const ReachBellContext = createContext<ReachBellContextValue | null>(null);
 
+/** True in development builds (bundlers inline `process.env.NODE_ENV`). */
+function isDev(): boolean {
+  try {
+    return process.env.NODE_ENV !== 'production';
+  } catch {
+    return false; // no bundler / no `process`: treat as production
+  }
+}
+
+type ProviderConfig = Omit<ReachBellConfig, 'force'>;
+
+/** Names of config props whose value differs (shallow) between two renders. */
+function changedKeys(a: ProviderConfig, b: ProviderConfig): string[] {
+  const keys = new Set([...Object.keys(a), ...Object.keys(b)]) as Set<keyof ProviderConfig>;
+  return [...keys].filter((key) => !Object.is(a[key], b[key]));
+}
+
 export interface ReachBellProviderProps extends Omit<ReachBellConfig, 'force'> {
   children: ReactNode;
 }
@@ -71,25 +88,43 @@ export function ReachBellProvider({ children, ...config }: ReachBellProviderProp
   const configRef = useRef(config);
   configRef.current = config;
   const initialized = useRef(false);
+  /** The config the SDK was initialised with (by this provider). */
+  const initConfig = useRef<ProviderConfig | null>(null);
+  const warnedConfigChange = useRef(false);
   const trackedReady = useRef<Promise<void> | null>(null);
   const [isReady, setIsReady] = useState(false);
   const [permission, setPermission] = useState<NotificationPermission | null>(null);
   const { apiKey } = config;
 
-  /** Follow the SDK's current boot promise; a (force) re-init swaps it. */
+  /**
+   * Follow the SDK's current boot promise; a (force) re-init swaps it. Also
+   * picks up an SDK the app initialised itself (e.g. ReachBell.init() before
+   * the provider mounted, or a provider without an apiKey): its `ready`
+   * promise resolves, so isReady still turns true. On an uninitialised SDK
+   * `ready` rejects — that is ignored and the next init/event retries.
+   */
   const trackReady = useCallback(() => {
-    if (!initialized.current) return;
-    const ready = ReachBell.ready;
+    if (typeof window === 'undefined') return;
+    let ready: Promise<void>;
+    try {
+      ready = ReachBell.ready;
+    } catch {
+      return;
+    }
     if (ready === trackedReady.current) return;
     trackedReady.current = ready;
     setIsReady(false);
-    ready
-      .catch(() => { /* the SDK warned-once already */ })
-      .finally(() => {
-        if (trackedReady.current !== ready) return;
-        setIsReady(true);
-        if (typeof Notification !== 'undefined') setPermission(Notification.permission);
-      });
+    const settle = () => {
+      if (trackedReady.current !== ready) return;
+      setIsReady(true);
+      if (typeof Notification !== 'undefined') setPermission(Notification.permission);
+    };
+    ready.then(settle, () => {
+      // Our own init failed: the SDK warned-once already, but boot settled.
+      if (initialized.current) settle();
+      // Not initialised by anyone yet: forget it so a later init is tracked.
+      else if (trackedReady.current === ready) trackedReady.current = null;
+    });
   }, []);
 
   /** Init once, on the client, once an apiKey is known. Safe to call often. */
@@ -98,8 +133,22 @@ export function ReachBellProvider({ children, ...config }: ReachBellProviderProp
     const latest = configRef.current;
     if (!latest.apiKey) return;
     initialized.current = true;
+    initConfig.current = { ...latest };
     ReachBell.init({ ...latest });
   }, []);
+
+  useEffect(() => {
+    // The SDK keeps its first config: tell developers when props change later.
+    if (warnedConfigChange.current || !initConfig.current || !isDev()) return;
+    const changed = changedKeys(initConfig.current, configRef.current);
+    if (changed.length === 0) return;
+    warnedConfigChange.current = true;
+    // eslint-disable-next-line no-console
+    console.warn(
+      `[ReachBell] <ReachBellProvider> props changed after init (${changed.join(', ')}). ` +
+        'The SDK keeps its first config; call ReachBell.init({ ...config, force: true }) to re-initialise.',
+    );
+  });
 
   useEffect(() => {
     ensureInit();
