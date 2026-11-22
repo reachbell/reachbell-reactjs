@@ -10,9 +10,11 @@
  *   const { prompt, identify, tag, ready, permission } = useReachBell();
  *
  * The provider initialises the underlying SDK exactly once, even under
- * React StrictMode (which double-invokes effects in dev). The hooks
- * are thin wrappers around the SDK's methods plus reactive state for
- * the current permission + ready signal.
+ * React StrictMode (which double-invokes effects in dev). React runs child
+ * effects before the provider's, so prompt/identify/tag also initialise
+ * lazily from the latest props: a child calling identify() on mount works.
+ * The hooks are thin wrappers around the SDK's methods plus reactive state
+ * for the current permission + ready signal.
  */
 import {
   createContext,
@@ -29,6 +31,7 @@ import {
   type ReachBellConfig,
   type SubscribeResult,
   type ApiResult,
+  type IdentifyOptions,
   type ToastOptions,
   type BannerOptions,
   type NotificationCenterOptions,
@@ -41,7 +44,8 @@ interface ReachBellContextValue {
   /** Current Notification permission state — null on the server / first render. */
   permission: NotificationPermission | null;
   prompt:     () => Promise<SubscribeResult>;
-  identify:   (externalId: string) => Promise<ApiResult>;
+  /** Link the subscription to your user id; `null` unlinks it (logout). */
+  identify:   (externalId: string | null, opts?: IdentifyOptions) => Promise<ApiResult>;
   tag:        (tags: string[]) => Promise<ApiResult>;
   /** In-page corner toast notification */
   showToast:  (opts: ToastOptions) => () => void;
@@ -49,6 +53,8 @@ interface ReachBellContextValue {
   showBanner: (opts: BannerOptions) => () => void;
   /** Floating notification center widget */
   showNotificationCenter: (opts?: NotificationCenterOptions) => () => void;
+  /** Re-read the browser permission into the provider state (and every consumer). */
+  refreshPermission: () => NotificationPermission | null;
   /** Direct access to the underlying SDK if you need it. */
   sdk:        typeof ReachBell;
 }
@@ -60,29 +66,53 @@ export interface ReachBellProviderProps extends Omit<ReachBellConfig, 'force'> {
 }
 
 export function ReachBellProvider({ children, ...config }: ReachBellProviderProps): ReactNode {
+  // Latest props, read lazily by ensureInit() so a child's identify()/tag()/
+  // prompt() on mount (which runs before this provider's effects) can init.
+  const configRef = useRef(config);
+  configRef.current = config;
   const initialized = useRef(false);
+  const trackedReady = useRef<Promise<void> | null>(null);
   const [isReady, setIsReady] = useState(false);
   const [permission, setPermission] = useState<NotificationPermission | null>(null);
   const { apiKey } = config;
 
-  useEffect(() => {
-    if (!apiKey) return;
-    if (!initialized.current) {
-      initialized.current = true;
-      ReachBell.init({ ...config, apiKey });
-    }
-
-    let cancelled = false;
-    ReachBell.ready
+  /** Follow the SDK's current boot promise; a (force) re-init swaps it. */
+  const trackReady = useCallback(() => {
+    if (!initialized.current) return;
+    const ready = ReachBell.ready;
+    if (ready === trackedReady.current) return;
+    trackedReady.current = ready;
+    setIsReady(false);
+    ready
       .catch(() => { /* the SDK warned-once already */ })
       .finally(() => {
-        if (cancelled) return;
+        if (trackedReady.current !== ready) return;
         setIsReady(true);
         if (typeof Notification !== 'undefined') setPermission(Notification.permission);
       });
-    return () => { cancelled = true; };
+  }, []);
+
+  /** Init once, on the client, once an apiKey is known. Safe to call often. */
+  const ensureInit = useCallback((): void => {
+    if (initialized.current || typeof window === 'undefined') return;
+    const latest = configRef.current;
+    if (!latest.apiKey) return;
+    initialized.current = true;
+    ReachBell.init({ ...latest });
+  }, []);
+
+  useEffect(() => {
+    ensureInit();
+    trackReady();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [apiKey]);
+
+  useEffect(() => {
+    // Someone called ReachBell.init({ force: true }): wait for the new boot.
+    if (typeof window === 'undefined') return;
+    window.addEventListener('reachbell:init', trackReady);
+    return () => window.removeEventListener('reachbell:init', trackReady);
+  }, [trackReady]);
 
   useEffect(() => {
     if (typeof Notification === 'undefined') return;
@@ -109,14 +139,27 @@ export function ReachBellProvider({ children, ...config }: ReachBellProviderProp
     };
   }, []);
 
-  const prompt = useCallback(async (): Promise<SubscribeResult> => {
-    const r = await ReachBell.prompt();
-    if (typeof Notification !== 'undefined') setPermission(Notification.permission);
-    return r;
+  const refreshPermission = useCallback((): NotificationPermission | null => {
+    if (typeof Notification === 'undefined') return null;
+    setPermission(Notification.permission);
+    return Notification.permission;
   }, []);
 
-  const identify = useCallback((externalId: string) => ReachBell.identify(externalId), []);
-  const tag      = useCallback((tags: string[]) => ReachBell.tag(tags), []);
+  const prompt = useCallback(async (): Promise<SubscribeResult> => {
+    ensureInit();
+    const r = await ReachBell.prompt();
+    refreshPermission();
+    return r;
+  }, [ensureInit, refreshPermission]);
+
+  const identify = useCallback((externalId: string | null, opts?: IdentifyOptions) => {
+    ensureInit();
+    return ReachBell.identify(externalId, opts);
+  }, [ensureInit]);
+  const tag = useCallback((tags: string[]) => {
+    ensureInit();
+    return ReachBell.tag(tags);
+  }, [ensureInit]);
   const showToast = useCallback((opts: ToastOptions) => ReachBell.showToast(opts), []);
   const showBanner = useCallback((opts: BannerOptions) => ReachBell.showBanner(opts), []);
   const showNotificationCenter = useCallback((opts?: NotificationCenterOptions) => ReachBell.showNotificationCenter(opts), []);
@@ -131,9 +174,10 @@ export function ReachBellProvider({ children, ...config }: ReachBellProviderProp
       showToast,
       showBanner,
       showNotificationCenter,
+      refreshPermission,
       sdk: ReachBell,
     }),
-    [isReady, permission, prompt, identify, tag, showToast, showBanner, showNotificationCenter],
+    [isReady, permission, prompt, identify, tag, showToast, showBanner, showNotificationCenter, refreshPermission],
   );
 
   return <ReachBellContext.Provider value={value}>{children}</ReachBellContext.Provider>;
@@ -159,27 +203,16 @@ export function useNotificationPermission(): {
   permission: NotificationPermission | null;
   refresh:    () => NotificationPermission | null;
 } {
-  const { permission } = useReachBell();
-  const [local, setLocal] = useState<NotificationPermission | null>(permission);
-
-  // Keep `local` in sync if the provider updates after a prompt() call.
-  useEffect(() => { setLocal(permission); }, [permission]);
-
-  const refresh = useCallback(() => {
-    if (typeof Notification !== 'undefined') {
-      setLocal(Notification.permission);
-      return Notification.permission;
-    }
-    return null;
-  }, []);
-
-  return { permission: local, refresh };
+  // Read straight from the provider so refresh() updates every consumer.
+  const { permission, refreshPermission } = useReachBell();
+  return { permission, refresh: refreshPermission };
 }
 
 export type {
   ReachBellConfig,
   SubscribeResult,
   ApiResult,
+  IdentifyOptions,
   ToastOptions,
   BannerOptions,
   NotificationCenterOptions,
