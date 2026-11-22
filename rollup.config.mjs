@@ -1,4 +1,17 @@
 import typescript from '@rollup/plugin-typescript';
+import { copyFileSync } from 'node:fs';
+
+/**
+ * One declaration file per module condition (same content), so TypeScript
+ * with node16/nodenext doesn't treat the CJS entry as ESM-typed.
+ */
+const perConditionTypes = () => ({
+  name: 'per-condition-types',
+  writeBundle: { sequential: true, order: 'post', handler() {
+    copyFileSync('dist/index.d.ts', 'dist/index.d.mts');
+    copyFileSync('dist/index.d.ts', 'dist/index.d.cts');
+  } },
+});
 
 export default {
   input: 'src/index.tsx',
@@ -16,5 +29,6 @@ export default {
       rootDir: 'src',
       sourceMap: true,
     }),
+    perConditionTypes(),
   ],
 };
