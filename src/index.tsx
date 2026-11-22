@@ -72,6 +72,9 @@ function isDev(): boolean {
 
 type ProviderConfig = Omit<ReachBellConfig, 'force'>;
 
+/** Config of the last init() a provider actually applied (module-wide, survives remounts). */
+let providerInitConfig: ProviderConfig | null = null;
+
 /** Names of config props whose value differs (shallow) between two renders. */
 function changedKeys(a: ProviderConfig, b: ProviderConfig): string[] {
   const keys = new Set([...Object.keys(a), ...Object.keys(b)]) as Set<keyof ProviderConfig>;
@@ -88,7 +91,7 @@ export function ReachBellProvider({ children, ...config }: ReachBellProviderProp
   const configRef = useRef(config);
   configRef.current = config;
   const initialized = useRef(false);
-  /** The config the SDK was initialised with (by this provider). */
+  /** The config the SDK was initialised with — only set when this provider's init() took effect. */
   const initConfig = useRef<ProviderConfig | null>(null);
   const warnedConfigChange = useRef(false);
   const trackedReady = useRef<Promise<void> | null>(null);
@@ -133,8 +136,33 @@ export function ReachBellProvider({ children, ...config }: ReachBellProviderProp
     const latest = configRef.current;
     if (!latest.apiKey) return;
     initialized.current = true;
-    initConfig.current = { ...latest };
-    ReachBell.init({ ...latest });
+    // ReachBell.init() dispatches `reachbell:init` synchronously only when it
+    // actually initialises; if the app already called ReachBell.init() itself
+    // the SDK ignores this call and keeps the app's config.
+    let applied = false;
+    const onInit = () => { applied = true; };
+    window.addEventListener('reachbell:init', onInit);
+    try {
+      ReachBell.init({ ...latest });
+    } finally {
+      window.removeEventListener('reachbell:init', onInit);
+    }
+    if (applied) {
+      initConfig.current = { ...latest };
+      providerInitConfig = initConfig.current;
+    } else if (providerInitConfig) {
+      // An earlier (since unmounted) provider initialised the SDK: compare
+      // later prop changes against the config it actually used.
+      initConfig.current = providerInitConfig;
+    } else if (isDev()) {
+      // Don't record our props as the SDK's config: the change warning would
+      // compare against a config that was never used.
+      // eslint-disable-next-line no-console
+      console.warn(
+        '[ReachBell] <ReachBellProvider> config was ignored: the SDK was already initialised by ReachBell.init(). ' +
+          'The provider uses that instance; drop the provider props or call ReachBell.init({ ...config, force: true }).',
+      );
+    }
   }, []);
 
   useEffect(() => {
